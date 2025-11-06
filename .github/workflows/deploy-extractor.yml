@@ -15,7 +15,7 @@ permissions:
 env:
   PROJECT_ID: ${{ vars.GCP_PROJECT }}
   REGION: ${{ vars.GCP_REGION }}
-  FUNCTION_NAME: extractor-per-listing
+  FUNCTION_NAME: ${{ vars.EXTRACTOR_FUNCTION_NAME || 'extractor-per-listing' }}
   FUNCTION_DIR: cloud_function/extractor-per-listing
   RUNTIME: python312
   BUCKET_NAME: ${{ vars.GCS_BUCKET }}
@@ -36,6 +36,13 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.PROJECT_ID }}
+
+      - name: Echo config
+        run: |
+          echo "PROJECT_ID=${PROJECT_ID}"
+          echo "REGION=${REGION}"
+          echo "FUNCTION_NAME=${FUNCTION_NAME}"
+          echo "FUNCTION_DIR=${FUNCTION_DIR}"
 
       - name: Verify source
         run: |
@@ -58,6 +65,7 @@ jobs:
             --entry-point="extract_http" \
             --trigger-http \
             ${SA_FLAG} \
+            --labels="app=${FUNCTION_NAME},component=extractor" \
             --set-env-vars="GCS_BUCKET=${BUCKET_NAME},SCRAPES_PREFIX=scrapes,STRUCTURED_PREFIX=structured,SIMPLE_RUN_ID_FORMAT=true"
 
       - name: Get Function URL
@@ -80,7 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           gcloud config set project "${PROJECT_ID}"
-          JOB_NAME="extract-per-listing-hourly"
+          JOB_NAME="${FUNCTION_NAME}-hourly"
           REGION="${REGION}"
           FUNCTION_URL="${{ steps.cfurl.outputs.url }}"
 
