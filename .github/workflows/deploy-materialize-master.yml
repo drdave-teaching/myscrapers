@@ -178,8 +178,11 @@ jobs:
           set -euo pipefail
           URL="${{ steps.cfurl.outputs.url }}"
           echo "POST $URL"
-          TOKEN="$(gcloud auth print-identity-token --audiences="${URL}")"
+          TOKEN="$(gcloud auth print-identity-token \
+                     --impersonate-service-account='${{ env.DEPLOYER_SA }}' \
+                     --audiences="${URL}")"
           curl -i -sS -X POST "$URL" \
             -H "Authorization: Bearer ${TOKEN}" \
             -H "Content-Type: application/json" \
             -d '${{ env.SCHEDULE_BODY }}' || true
+
