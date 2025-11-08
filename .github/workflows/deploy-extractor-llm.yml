@@ -2,16 +2,18 @@ name: Deploy LLM Extractor (CF Gen2 + Cloud Scheduler)
 run-name: "LLM Extractor deploy by ${{ github.actor }} • ${{ github.ref_name }}"
 
 on:
+  # Triggers on push to main affecting the function or workflow file
   push:
     branches: [ main ]
     paths:
       - 'cloud_function/extractor-llm-poc/**'
       - '.github/workflows/deploy-extractor-llm.yml'
+  # Allows manual triggering from the GitHub UI
   workflow_dispatch: {}
 
 permissions:
   contents: read
-  id-token: write
+  id-token: write # Required for Workload Identity Federation (WIF)
 
 env:
   PROJECT_ID: ${{ vars.PROJECT_ID }}
@@ -44,6 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # --- 1. AUTHENTICATION & SETUP ---
       - name: Auth (WIF)
         uses: google-github-actions/auth@v2
         with:
@@ -65,6 +68,7 @@ jobs:
               || gcloud services enable "$API"
           done
 
+      # --- 2. CLOUD FUNCTION DEPLOYMENT ---
       - name: Deploy Cloud Function (Gen2)
         run: |
           set -euo pipefail
@@ -85,6 +89,15 @@ jobs:
             "${SA_ARGS[@]}" \
             --set-env-vars="PROJECT_ID=${PROJECT_ID},GCS_BUCKET=${BUCKET_NAME},STRUCTURED_PREFIX=${LLM_STRUCTURED_PREFIX},LLM_PROVIDER=${LLM_PROVIDER},LLM_MODEL=${LLM_MODEL},OVERWRITE=${LLM_OVERWRITE},MAX_FILES=${LLM_MAX_FILES}"
 
+      - name: Get Function URL
+        id: cfurl
+        run: |
+          URL=$(gcloud functions describe "${FUNCTION_NAME}" --gen2 --region "${REGION}" --format='value(serviceConfig.uri)')
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+
+      # --- 3. IAM GRANTS (RUNTIME AND DEPLOYER SAs) ---
+      
+      # Grant Invoker for security/access control (needed for deployer for testing, and runtime for clarity)
       - name: Grant invoker to deployer & runtime SAs
         run: |
           gcloud functions add-invoker-policy-binding "${FUNCTION_NAME}" \
@@ -94,6 +107,7 @@ jobs:
             --gen2 --region "${REGION}" \
             --member="serviceAccount:${RUNTIME_SA}"
 
+      # Grant Vertex AI User (needed for Gemini access)
       - name: Grant Vertex AI user to runtime SA (for Gemini calls)
         run: |
           set -euo pipefail
@@ -107,12 +121,23 @@ jobs:
             echo "::error::RUNTIME_SA is not set. Add repo variable RUNTIME_SA."
             exit 1
           fi
-
-      - name: Get Function URL
-        id: cfurl
+          
+      # 🚀 CRITICAL NEW STEP: Grant GCS permissions (needed for R/W data)
+      - name: Grant GCS Object Admin to runtime SA (for R/W data)
         run: |
-          URL=$(gcloud functions describe "${FUNCTION_NAME}" --gen2 --region "${REGION}" --format='value(serviceConfig.uri)')
-          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          if [[ -n "${RUNTIME_SA:-}" ]]; then
+            gcloud storage buckets add-iam-policy-binding gs://${BUCKET_NAME} \
+              --member="serviceAccount:${RUNTIME_SA}" \
+              --role="roles/storage.objectAdmin" || {
+                echo "::warning:: Could not grant roles/storage.objectAdmin to ${RUNTIME_SA}. Ensure this binding exists once."
+              }
+          else
+            echo "::error::RUNTIME_SA is not set. Add repo variable RUNTIME_SA."
+            exit 1
+          fi
+      
+      # --- 4. CLOUD SCHEDULER SETUP (OIDC) ---
 
       - name: Bootstrap IAM for Scheduler OIDC (runtime SA)
         run: |
