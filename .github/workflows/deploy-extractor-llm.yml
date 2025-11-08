@@ -1,19 +1,18 @@
 name: Deploy LLM Extractor (CF Gen2 + Cloud Scheduler)
 run-name: "LLM Extractor deploy by ${{ github.actor }} • ${{ github.ref_name }}"
 
+# ... (on, permissions, env sections remain unchanged) ...
 on:
-  # Triggers on push to main affecting the function or workflow file
   push:
     branches: [ main ]
     paths:
       - 'cloud_function/extractor-llm-poc/**'
       - '.github/workflows/deploy-extractor-llm.yml'
-  # Allows manual triggering from the GitHub UI
   workflow_dispatch: {}
 
 permissions:
   contents: read
-  id-token: write # Required for Workload Identity Federation (WIF)
+  id-token: write
 
 env:
   PROJECT_ID: ${{ vars.PROJECT_ID }}
@@ -22,21 +21,15 @@ env:
   FUNCTION_DIR: cloud_function/extractor-llm-poc
   ENTRY_POINT: llm_extract_http
   RUNTIME: python312
-
-  # Your existing vars
   BUCKET_NAME: ${{ vars.BUCKET_NAME }}
   RUNTIME_SA: ${{ vars.RUNTIME_SA }}
   DEPLOYER_SA: ${{ vars.DEPLOYER_SA }}
   WORKLOAD_IDENTITY_PROVIDER: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
-
-  # LLM config (defaults fine for PoC)
   LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'vertex' }}
   LLM_MODEL: ${{ vars.LLM_MODEL || 'gemini-1.5-flash' }}
   LLM_OVERWRITE: ${{ vars.LLM_OVERWRITE || 'false' }}
-  LLM_MAX_FILES: ${{ vars.LLM_MAX_FILES || '0' }} # 0 = all
+  LLM_MAX_FILES: ${{ vars.LLM_MAX_FILES || '0' }}
   LLM_STRUCTURED_PREFIX: ${{ vars.STRUCTURED_PREFIX || 'structured' }}
-
-  # Scheduler: run at :12 ET each hour
   SCHEDULE_BODY: ${{ vars.EXTRACTOR_LLM_BODY || '{"overwrite":false,"max_files":0}' }}
   CRON_EXPR: "12 * * * *"
 
@@ -60,13 +53,25 @@ jobs:
         with:
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: Ensure required APIs enabled (Vertex AI + Scheduler)
+      - name: Ensure required APIs enabled (Vertex AI, Scheduler, Artifact Registry)
         run: |
           set -euo pipefail
-          for API in aiplatform.googleapis.com cloudscheduler.googleapis.com; do
+          # Include Artifact Registry API
+          for API in aiplatform.googleapis.com cloudscheduler.googleapis.com artifactregistry.googleapis.com; do
             gcloud services list --enabled --filter="$API" --format="value(config.name)" | grep -q "$API" \
               || gcloud services enable "$API"
           done
+          
+      # 💥 NEW STEP TO FIX CRASH 💥
+      - name: Ensure Artifact Registry Ready (CF Gen2)
+        run: |
+          # The CF Gen2 default repository is 'cloud-functions' with 'docker' format
+          set +e # Allow gcloud command to fail if repo already exists
+          gcloud artifacts repositories create cloud-functions \
+            --repository-format=docker \
+            --location="${REGION}" \
+            --description="Cloud Functions Gen2 deployment repository"
+          set -e # Restore strict execution
 
       # --- 2. CLOUD FUNCTION DEPLOYMENT ---
       - name: Deploy Cloud Function (Gen2)
@@ -97,7 +102,6 @@ jobs:
 
       # --- 3. IAM GRANTS (RUNTIME AND DEPLOYER SAs) ---
       
-      # Grant Invoker for security/access control (needed for deployer for testing, and runtime for clarity)
       - name: Grant invoker to deployer & runtime SAs
         run: |
           gcloud functions add-invoker-policy-binding "${FUNCTION_NAME}" \
@@ -107,7 +111,6 @@ jobs:
             --gen2 --region "${REGION}" \
             --member="serviceAccount:${RUNTIME_SA}"
 
-      # Grant Vertex AI User (needed for Gemini access)
       - name: Grant Vertex AI user to runtime SA (for Gemini calls)
         run: |
           set -euo pipefail
@@ -122,7 +125,6 @@ jobs:
             exit 1
           fi
           
-      # 🚀 CRITICAL NEW STEP: Grant GCS permissions (needed for R/W data)
       - name: Grant GCS Object Admin to runtime SA (for R/W data)
         run: |
           set -euo pipefail
