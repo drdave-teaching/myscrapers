@@ -15,7 +15,7 @@ permissions:
 env:
   PROJECT_ID: ${{ vars.PROJECT_ID }}
   REGION: ${{ vars.REGION }}
-  FUNCTION_NAME: materialize-master
+  FUNCTION_NAME: "materialize-master"
   FUNCTION_DIR: cloud_function/materialize-master
   ENTRY_POINT: materialize_http
   RUNTIME: python312
