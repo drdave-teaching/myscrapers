@@ -38,7 +38,7 @@ storage_client = storage.Client()
 # -------------------- SIMPLE REGEX EXTRACTORS --------------------
 PRICE_RE      = re.compile(r"\$\s?([0-9,]+)")
 YEAR_RE       = re.compile(r"\b(19|20)\d{2}\b")
-MAKE_MODEL_RE = re.compile(r"\b([A-Z][a-z]+)\s+([A-Z][A-Za-z0-9]+)")
+MAKE_MODEL_RE = re.compile(r"^(?:19|20)\d{2}\n([A-Za-z-]+)\s+([A-Za-z0-9-]+)", re.MULTILINE)
 
 MAX_RUNS_PER_CALL = int(os.getenv("MAX_RUNS_PER_CALL", "24"))  # safety cap: scrape runs handled per call
 
