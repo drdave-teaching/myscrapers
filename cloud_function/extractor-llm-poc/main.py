@@ -186,6 +186,19 @@ def _vertex_extract_fields(raw_text: str) -> dict:
             "make": {"type": "string", "nullable": True},
             "model": {"type": "string", "nullable": True},
             "mileage": {"type": "integer", "nullable": True},
+                        # ---- A07: 10 new fields (left OUT of "required" so Gemini can say null instead of guessing) ----
+            "trim": {"type": "string", "nullable": True},
+            "body_type": {"type": "string", "nullable": True,
+                          "enum": ["sedan", "suv", "truck", "coupe", "convertible", "hatchback", "wagon", "minivan", "van", "other"]},
+            "drivetrain": {"type": "string", "nullable": True, "enum": ["fwd", "rwd", "awd", "4wd"]},
+            "transmission": {"type": "string", "nullable": True, "enum": ["automatic", "manual"]},
+            "fuel_type": {"type": "string", "nullable": True, "enum": ["gas", "diesel", "hybrid", "electric"]},
+            "exterior_color": {"type": "string", "nullable": True,
+                               "enum": ["black", "white", "silver", "gray", "blue", "red", "green", "brown", "beige", "gold", "yellow", "orange", "purple", "other"]},
+            "title_status": {"type": "string", "nullable": True, "enum": ["clean", "rebuilt", "salvage", "lien", "missing", "parts only"]},
+            "condition": {"type": "string", "nullable": True, "enum": ["new", "like new", "excellent", "good", "fair", "salvage"]},
+            "leather_seats": {"type": "boolean", "nullable": True},
+            "city": {"type": "string", "nullable": True},
         },
         "required": ["price", "year", "make", "model", "mileage"]
     }
@@ -196,7 +209,14 @@ def _vertex_extract_fields(raw_text: str) -> dict:
         "Return a strict JSON object that conforms to the provided schema. "
         "If a value is not present, use null. "
         "Rules: integers for price/year/mileage; price in USD; mileage in miles; "
-        "do not infer values not explicitly present; do not add extra keys."
+                "do not infer values not explicitly present; do not add extra keys. "
+        # ---- A07: rules for the new fields ----
+        "trim: the trim level only (e.g. 'LX', 'Sport', 'Limited'), not the make or model. "
+        "body_type: you MAY infer it from a well-known make and model (a Honda CR-V is an suv). "
+        "drivetrain, transmission, fuel_type, exterior_color, title_status, condition: use the ad's own "
+        "attribute lines (like 'drive: 4wd' or 'paint color: white') or clear statements in the text; a CVT counts as automatic. "
+        "leather_seats: true only if the ad mentions leather seats or leather interior, false only if it says cloth seats, otherwise null. "
+        "city: the town in parentheses after the price, e.g. '(Avon)' -> 'Avon'."
     )
 
     # FIX: Combine instruction and text into one prompt string (SDK compatibility)
@@ -349,6 +369,17 @@ def llm_extract_http(request: Request):
                     "llm_provider": "vertex",
                     "llm_model": LLM_MODEL,
                     "llm_ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                                        # ---- A07: write the new fields too (a field missing here never reaches your CSV) ----
+                    "trim": parsed.get("trim"),
+                    "body_type": parsed.get("body_type"),
+                    "drivetrain": parsed.get("drivetrain"),
+                    "transmission": parsed.get("transmission"),
+                    "fuel_type": parsed.get("fuel_type"),
+                    "exterior_color": parsed.get("exterior_color"),
+                    "title_status": parsed.get("title_status"),
+                    "condition": parsed.get("condition"),
+                    "leather_seats": parsed.get("leather_seats"),
+                    "city": parsed.get("city"),
                 }
 
                 _upload_jsonl_line(out_key, out_record)
